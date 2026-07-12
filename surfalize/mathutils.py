@@ -10,6 +10,42 @@ if int(np.__version__.split('.')[0]) < 2:
 else:
     trapezoid = np.trapezoid
 
+def resolve_box(box, border, x_max, y_max):
+    """
+    Resolves a rectangle specification from either an explicit box or a border inset.
+
+    Exactly one of `box` or `border` must be given. `box` is returned unchanged as an
+    (x0, x1, y0, y1) tuple. `border` specifies the distance from each edge inwards to the
+    rectangle, in the same units and axis order as `box`: a scalar insets all four edges
+    equally, while an (x0, x1, y0, y1) tuple insets each edge individually. `x_max` and
+    `y_max` are the coordinates of the far edges (`width_um`/`height_um` in physical units,
+    or `size.x - 1`/`size.y - 1` in pixels).
+
+    Parameters
+    ----------
+    box : tuple[float, float, float, float] | None
+        Explicit rectangle as (x0, x1, y0, y1), or None if `border` is used instead.
+    border : float | tuple[float, float, float, float] | None
+        Distance from each edge inwards, as a scalar or (x0, x1, y0, y1) tuple, or None if
+        `box` is used instead.
+    x_max, y_max : float
+        Coordinates of the far edges along x and y.
+
+    Returns
+    -------
+    box : tuple[float, float, float, float]
+        The resolved (x0, x1, y0, y1) rectangle.
+    """
+    if (box is None) == (border is None):
+        raise ValueError("Exactly one of 'box' or 'border' must be specified.")
+    if box is not None:
+        return box
+    if np.isscalar(border):
+        d_x0 = d_x1 = d_y0 = d_y1 = border
+    else:
+        d_x0, d_x1, d_y0, d_y1 = border
+    return (d_x0, x_max - d_x1, d_y0, y_max - d_y1)
+
 def interpolate_line_on_2d_array(array, start, end, order=3, num_points=100):
     """
     Interpolates a line between two points on a 2d array using spline interpolation.

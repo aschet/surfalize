@@ -21,7 +21,7 @@ import scipy.ndimage as ndimage
 from .file import FileHandler
 from .utils import approximately_equal
 from .cache import cache
-from .mathutils import Sinusoid, Cylinder, trapezoid, otsu_threshold
+from .mathutils import Sinusoid, Cylinder, trapezoid, otsu_threshold, resolve_box
 from .exceptions import FittingError
 from .autocorrelation import AutocorrelationFunction
 from .feature import FeatureParameters
@@ -426,7 +426,7 @@ class Surface(BaseTopography):
         """
         return list(self.image_layers.keys())
 
-    def get_horizontal_profile(self, y, average=1, average_step=None):
+    def get_horizontal_profile(self, y, average=1, average_step=None, start=None, end=None):
         """
         Extracts a horizontal profile from the surface with optional averaging over parallel profiles.
         Profiles on the edge might be averaged over fewer profiles.
@@ -434,8 +434,13 @@ class Surface(BaseTopography):
         Parameters
         ----------
         y : float
-            vertical (height) value in µm from where the profile is extracted. The value is rounded to the closest data
+            vertical (height) value in µm from where the profile is extracted, measured from the bottom of the surface
+            to match the convention of `Surface.plot_2d` and `Surface.crop`. The value is rounded to the closest data
             point.
+        start : float, default None
+            lateral (width) value in µm at which the profile starts. Defaults to the left edge (0) if None.
+        end : float, default None
+            lateral (width) value in µm at which the profile ends. Defaults to the right edge (width) if None.
         average : int
             number of profiles over which to average. Defaults to 1. Profiles will be extracted above and below the
             position designated by y.
@@ -447,16 +452,17 @@ class Surface(BaseTopography):
         -------
         profile : surfalize.Profile
         """
-        if y > self.height_um:
-            raise ValueError("y must not exceed height of surface.")
-        
+        if not 0 <= y <= self.height_um:
+            raise ValueError("y must be between 0 and the height of the surface.")
+
         if average_step is None:
             average_step_px = 1
         else:
             average_step_px = int(average_step / self.step_y)
 
-        # vertical index of profile
-        idx = int(y / self.height_um * self.size.y)
+        # Row index of the profile. y is measured from the bottom, while row 0 is the top of the array, so the axis is
+        # inverted to stay consistent with plot_2d/crop (y=0 -> bottom row, y=height_um -> top row).
+        idx = self.size.y - 1 - round(y / self.step_y)
         # first index from which a profile is taken for averaging
         idx_min = idx - int(average / 2) * average_step_px
         idx_min = 0 if idx_min < 0 else idx_min
@@ -464,9 +470,17 @@ class Surface(BaseTopography):
         idx_max = idx + int(average / 2) * average_step_px
         idx_max = self.size.y if idx_max > self.size.y else idx_max
         data = self.data[idx_min:idx_max + 1:average_step_px].mean(axis=0)
-        return Profile(data, self.step_x, self.width_um)
+
+        if start is not None or end is not None:
+            start = 0.0 if start is None else start
+            end = self.width_um if end is None else end
+            if not 0 <= start < end <= self.width_um:
+                raise ValueError("start and end must satisfy 0 <= start < end <= width of surface.")
+            data = data[round(start / self.step_x):round(end / self.step_x) + 1]
+
+        return Profile(data, self.step_x, (data.shape[0] - 1) * self.step_x)
     
-    def get_vertical_profile(self, x, average=1, average_step=None):
+    def get_vertical_profile(self, x, average=1, average_step=None, start=None, end=None):
         """
          Extracts a vertical profile from the surface with optional averaging over parallel profiles.
          Profiles on the edge might be averaged over fewer profiles.
@@ -476,6 +490,10 @@ class Surface(BaseTopography):
          x : float
              laterial (width) value in µm from where the profile is extracted. The value is rounded to the closest data
              point.
+         start : float, default None
+             vertical (height) value in µm at which the profile starts. Defaults to the bottom edge (0) if None.
+         end : float, default None
+             vertical (height) value in µm at which the profile ends. Defaults to the top edge (height) if None.
          average : int
              number of profiles over which to average. Defaults to 1. Profiles will be extracted above and below the
              position designated by x.
@@ -487,16 +505,16 @@ class Surface(BaseTopography):
          -------
          profile : surfalize.Profile
          """
-        if x > self.width_um:
-            raise ValueError("x must not exceed height of surface.")
-        
+        if not 0 <= x <= self.width_um:
+            raise ValueError("x must be between 0 and the width of the surface.")
+
         if average_step is None:
             average_step_px = 1
         else:
             average_step_px = int(average_step / self.step_x)
 
-        # vertical index of profile
-        idx = int(x / self.width_um * self.size.x)
+        # Column index of the profile.
+        idx = round(x / self.step_x)
         # first index from which a profile is taken for averaging
         idx_min = idx - int(average / 2) * average_step_px
         idx_min = 0 if idx_min < 0 else idx_min
@@ -504,7 +522,18 @@ class Surface(BaseTopography):
         idx_max = idx + int(average / 2) * average_step_px
         idx_max = self.size.x if idx_max > self.size.x else idx_max
         data = self.data[:, idx_min:idx_max + 1:average_step_px].mean(axis=1)
-        return Profile(data, self.step_y, self.height_um)
+        # The array runs from the top row downwards; reverse it so the profile axis increases from the bottom of the
+        # surface upwards, consistent with the y-axis of plot_2d and the y measured by crop (start=0 -> bottom edge).
+        data = data[::-1]
+
+        if start is not None or end is not None:
+            start = 0.0 if start is None else start
+            end = self.height_um if end is None else end
+            if not 0 <= start < end <= self.height_um:
+                raise ValueError("start and end must satisfy 0 <= start < end <= height of surface.")
+            data = data[round(start / self.step_y):round(end / self.step_y) + 1]
+
+        return Profile(data, self.step_y, (data.shape[0] - 1) * self.step_y)
 
     #TODO: implement averaging
     def get_oblique_profile(self, x0, y0, x1, y1):
@@ -668,6 +697,89 @@ class Surface(BaseTopography):
             return_surface = self
         else:
             return_surface = self._with_data(detrended)
+
+        if return_trend:
+            return return_surface, Surface(trend, self.step_x, self.step_y)
+        return return_surface
+
+    @batch_method('operation', fixed={'inplace': True, 'return_trend': False})
+    def level_points(self, points, radius, in_units=True, inplace=False, return_trend=False):
+        """
+        Levels the surface by subtracting a least squares plane fitted only to the areas around a set of user-specified
+        points.
+
+        A circular region of the given radius is placed around each point, and the leveling plane is fitted to the
+        valid (measured, unmasked) data inside the union of these regions. This is useful when the reference (datum)
+        areas are known but a global plane fit would be biased by features that should be ignored, e.g. laser-ablated
+        cavities or other deep structures. Selecting a few points on the undisturbed reference surface avoids the
+        extensive masking that would otherwise be required to exclude those features from the fit.
+
+        Parameters
+        ----------
+        points : sequence of (x, y)
+            At least three coordinate pairs marking the reference areas. If ``in_units`` is True, the coordinates are
+            in µm with the y-axis measured from the bottom of the surface, matching the convention of `Surface.crop`
+            and the mask region methods. Otherwise they are pixel indices (column, row) from the top-left. The points
+            must not be collinear.
+        radius : float
+            Radius of the circular region around each point, in µm (``in_units=True``) or pixels (``in_units=False``).
+        in_units : bool, default True
+            If True, interpret points and radius in physical units (µm). If False, in pixels.
+        inplace : bool, default False
+            If False, create and return a new Surface object with processed data. If True, change data inplace and
+            return self.
+        return_trend : bool, default False
+            Return the fitted plane as a Surface object alongside the leveled surface if True.
+
+        Returns
+        -------
+        Surface or tuple of Surfaces
+        """
+        points = np.asarray(points, dtype=float)
+        if points.ndim != 2 or points.shape[1] != 2:
+            raise ValueError('points must be a sequence of (x, y) coordinate pairs.')
+        if len(points) < 3:
+            raise ValueError('At least three points are required to fit a leveling plane.')
+
+        ny, nx = self.size
+        yy, xx = np.mgrid[0:ny, 0:nx]
+        if in_units:
+            xg = xx * self.step_x
+            yg = (ny - 1 - yy) * self.step_y
+        else:
+            xg, yg = xx, yy
+
+        # Union of the circular regions around the specified points
+        selection = np.zeros((ny, nx), dtype=bool)
+        for px, py in points:
+            selection |= (xg - px) ** 2 + (yg - py) ** 2 <= radius ** 2
+
+        # Restrict the fit to valid (measured, unmasked) points inside the selection
+        fit_region = selection & ~self._invalid
+        if fit_region.sum() < 3:
+            raise ValueError('The regions around the specified points do not contain enough valid data to fit a '
+                             'plane. Increase the radius or reposition the points.')
+
+        # Normalize coordinates to [-1, 1] for numerical stability (same convention as detrend_polynomial)
+        x = (xx - xx.mean()) / xx.max()
+        y = (yy - yy.mean()) / yy.max()
+
+        A = np.column_stack((np.ones(fit_region.sum()), x[fit_region], y[fit_region]))
+        if np.linalg.matrix_rank(A) < 3:
+            warnings.warn('The specified points (or their valid data) are (nearly) collinear; the leveling plane is '
+                          'ill-defined along one direction.', RuntimeWarning)
+        coeffs, _, _, _ = np.linalg.lstsq(A, self.data[fit_region], rcond=None)
+
+        A_full = np.column_stack((np.ones(x.size), x.flatten(), y.flatten()))
+        trend = (A_full @ coeffs).reshape(self.size)
+
+        leveled = np.where(np.isnan(self.data), np.nan, self.data - trend)
+
+        if inplace:
+            self._set_data(data=leveled)
+            return_surface = self
+        else:
+            return_surface = self._with_data(leveled)
 
         if return_trend:
             return return_surface, Surface(trend, self.step_x, self.step_y)
@@ -856,16 +968,23 @@ class Surface(BaseTopography):
         return Surface(data, self.step_x, self.step_y, mask=mask)
 
     @batch_method('operation')
-    def crop(self, box, in_units=True, inplace=False):
+    def crop(self, box=None, border=None, in_units=True, inplace=False):
         """
-        Crop the surface to the area specified by the box parameter.
+        Crop the surface to the area specified by the box or border parameter.
+
+        Exactly one of `box` or `border` must be given.
 
         Parameters
         ----------
-        box : tuple[float, float, float, float]
+        box : tuple[float, float, float, float], optional
             The crop rectangle, as a (x0, x1, y0, y1) tuple.
+        border : float | tuple[float, float, float, float], optional
+            Alternative to `box`: the distance from each edge inwards to the crop rectangle, in the same units and
+            axis order as `box`. A scalar keeps the same distance to all four edges, so
+            ``surface.crop(border=100)`` is equivalent to ``surface.crop((100, surface.width_um - 100, 100,
+            surface.height_um - 100))``. A (x0, x1, y0, y1) tuple sets the distance to each edge individually.
         in_units : bool, default True
-            If true, the box is interpreted as physical units (µm). If false, the box is interpreted in pixel values.
+            If true, box/border are interpreted as physical units (µm). If false, they are interpreted in pixel values.
 
         Returns
         -------
@@ -873,11 +992,13 @@ class Surface(BaseTopography):
             Surface object.
         """
         if in_units:
+            box = resolve_box(box, border, self.width_um, self.height_um)
             x0 = round(box[0] / self.step_x)
             x1 = round(box[1] / self.step_x)
             y1 = self.size.y - round(box[2] / self.step_y) - 1
             y0 = self.size.y - round(box[3] / self.step_y) - 1
         else:
+            box = resolve_box(box, border, self.size.x - 1, self.size.y - 1)
             x0, x1, y0, y1 = box
 
         if x0 < 0 or y0 < 0 or x1 > self.size.x - 1 or y1 > self.size.y - 1:

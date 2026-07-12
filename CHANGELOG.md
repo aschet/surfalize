@@ -33,6 +33,22 @@
   provided by the `zstandard` dependency
 - Added reading support for the Olympus LEXT OLS4000 (`.lext`) file format, including the height channel as well as
   the color (RGB) and intensity image layers and the acquisition parameters as metadata
+- `Surface.crop`, `Mask.add_rectangle` and `Mask.subtract_rectangle` now accept a `border` keyword as an alternative
+  to `box`, specifying the distance from each edge inwards to the rectangle. A scalar keeps the same distance to all
+  four edges (``surface.crop(border=100)`` instead of ``surface.crop((100, surface.width_um - 100, 100,
+  surface.height_um - 100))``), while a (x0, x1, y0, y1) tuple sets the distance to each edge individually.
+- Added `Surface.level_points`, which levels the surface by fitting a least squares plane only to circular regions of
+  a given radius around a set of at least three user-specified points. This is useful when a global plane fit would be
+  biased by features that should be excluded (e.g. laser-ablated cavities): a few points on the undisturbed reference
+  surface replace the extensive masking that would otherwise be needed to remove those features from the fit.
+- `Surface.get_horizontal_profile` and `Surface.get_vertical_profile` now accept `start` and `end` keywords (in µm
+  along the profile axis) to extract a sub-section of the profile instead of the full width/height. Both default to
+  the respective edge, so omitting them reproduces the previous full-profile behavior.
+- Fixed the vertical orientation of `Surface.get_horizontal_profile` and `Surface.get_vertical_profile`, which was
+  inverted relative to `Surface.plot_2d` and `Surface.crop`. The profile position `y` (horizontal) is now measured
+  from the bottom of the surface, and the vertical profile axis now increases from the bottom upwards, so extracted
+  profiles are no longer flipped compared to the 2D plot they were sampled from. Also fixed an off-by-one that
+  returned an all-NaN profile when sampling exactly at `width_um`/`height_um`.
 
 ## v0.17.1
 - Fixed the equivalent straight line used for the stratified functional parameters (`Sk`/`Rk`, `Spk`/`Rpk`,

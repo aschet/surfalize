@@ -293,6 +293,44 @@ def test_get_horizontal_profile_out_of_bounds(surface):
     with pytest.raises(ValueError):
         surface.get_horizontal_profile(surface.height_um + 1)
 
+def test_profile_orientation_matches_plot_convention():
+    # Encode the row and column index into each value so the orientation can be checked unambiguously. Row 0 is the
+    # top of the array; plot_2d (origin='upper') and crop place y=0 at the bottom (last row) and y=height at the top.
+    ny, nx = 6, 8
+    data = (np.arange(ny)[:, None] * 100 + np.arange(nx)[None, :]).astype(float)
+    surface = Surface(data, step_x=1.0, step_y=1.0)
+
+    # Horizontal profile: y=0 -> bottom row (ny-1), y=height -> top row (0)
+    assert_array_almost_equal(surface.get_horizontal_profile(0).data, data[ny - 1])
+    assert_array_almost_equal(surface.get_horizontal_profile(surface.height_um).data, data[0])
+
+    # Vertical profile axis increases from the bottom of the surface upwards
+    assert_array_almost_equal(surface.get_vertical_profile(0).data, data[::-1, 0])
+
+def test_profile_extraction_at_bounds_not_nan():
+    surface = Surface(np.arange(48, dtype=float).reshape(6, 8), step_x=1.0, step_y=1.0)
+    assert not np.isnan(surface.get_horizontal_profile(surface.height_um).data).any()
+    assert not np.isnan(surface.get_vertical_profile(surface.width_um).data).any()
+
+def test_profile_start_end_subsection():
+    data = np.arange(48, dtype=float).reshape(6, 8)
+    surface = Surface(data, step_x=1.0, step_y=1.0)  # width_um=7, height_um=5
+
+    # Horizontal sub-section along x (unaffected by the y flip)
+    h = surface.get_horizontal_profile(0, start=2, end=5)
+    assert h.size == 4
+    assert h.length_um == pytest.approx(3.0)
+    assert_array_almost_equal(h.data, data[5, 2:6])
+
+    # Vertical sub-section along y, measured from the bottom
+    v = surface.get_vertical_profile(0, start=1, end=3)
+    assert v.size == 3
+    assert v.length_um == pytest.approx(2.0)
+    assert_array_almost_equal(v.data, data[::-1, 0][1:4])
+
+    with pytest.raises(ValueError):
+        surface.get_horizontal_profile(0, start=5, end=2)
+
 def test_fill_nonmeasured(noisy_surface):
     surface_with_missing_points = noisy_surface.remove_outliers()
     assert not bool(np.any(np.isnan(surface_with_missing_points.fill_nonmeasured().data)))

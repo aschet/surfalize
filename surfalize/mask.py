@@ -1,5 +1,7 @@
 import numpy as np
 
+from .mathutils import resolve_box
+
 
 class Mask:
     """
@@ -131,15 +133,17 @@ class Mask:
 
     # Region construction ##############################################################################################
 
-    def _rectangle_region(self, box, in_units):
+    def _rectangle_region(self, box, border, in_units):
         """Builds a boolean array that is True inside the specified rectangle."""
         ny, nx = self._surface.size
         if in_units:
+            box = resolve_box(box, border, self._surface.width_um, self._surface.height_um)
             x0 = round(box[0] / self._surface.step_x)
             x1 = round(box[1] / self._surface.step_x)
             y1 = ny - round(box[2] / self._surface.step_y) - 1
             y0 = ny - round(box[3] / self._surface.step_y) - 1
         else:
+            box = resolve_box(box, border, nx - 1, ny - 1)
             x0, x1, y0, y1 = box
         if x0 < 0 or y0 < 0 or x1 > nx - 1 or y1 > ny - 1:
             raise ValueError('Rectangle is out of bounds!')
@@ -159,17 +163,24 @@ class Mask:
         cx, cy = center
         return (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2
 
-    def add_rectangle(self, box, in_units=True, inplace=False):
+    def add_rectangle(self, box=None, border=None, in_units=True, inplace=False):
         """
         Masks all points inside a rectangle.
 
+        Exactly one of `box` or `border` must be given.
+
         Parameters
         ----------
-        box : tuple[float, float, float, float]
+        box : tuple[float, float, float, float], optional
             Rectangle as a (x0, x1, y0, y1) tuple. If in_units is True, the values are in µm and the y-axis is measured
             from the bottom, matching the convention of `Surface.crop`. Otherwise the values are pixel indices.
+        border : float | tuple[float, float, float, float], optional
+            Alternative to `box`: the distance from each edge inwards to the rectangle, in the same units and axis
+            order as `box`. A scalar keeps the same distance to all four edges, so ``mask.add_rectangle(border=100)``
+            masks everything except a 100 µm strip along each edge. A (x0, x1, y0, y1) tuple sets the distance to each
+            edge individually.
         in_units : bool, default True
-            If True, interpret box in physical units (µm). If False, interpret box in pixel indices.
+            If True, interpret box/border in physical units (µm). If False, in pixel indices.
         inplace : bool, default False
             If False, return a copy of the surface with the updated mask. If True, modify the surface in place and
             return it.
@@ -179,11 +190,11 @@ class Mask:
         surface : surfalize.Surface
         """
         m = self._target(inplace)
-        m._ensure()[m._rectangle_region(box, in_units)] = True
+        m._ensure()[m._rectangle_region(box, border, in_units)] = True
         m._changed()
         return m._surface
 
-    def subtract_rectangle(self, box, in_units=True, inplace=False):
+    def subtract_rectangle(self, box=None, border=None, in_units=True, inplace=False):
         """
         Unmasks all points inside a rectangle. See `add_rectangle` for the parameter description.
 
@@ -193,7 +204,7 @@ class Mask:
         """
         m = self._target(inplace)
         if m._array is not None:
-            m._array[m._rectangle_region(box, in_units)] = False
+            m._array[m._rectangle_region(box, border, in_units)] = False
             m._changed()
         return m._surface
 
