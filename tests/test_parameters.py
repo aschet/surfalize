@@ -268,9 +268,14 @@ def test_feature_edge_exclusion_reduces_count(bump_surface):
 
 
 def test_feature_peak_curvature_sign(bump_surface):
-    # Peaks are convex (Spc > 0); the surrounding dale is concave (Svc < 0).
+    # Peaks are convex, so the mean peak curvature is positive.
     assert bump_surface.Spc(exclude_edge=False) > 0
-    assert bump_surface.Svc(exclude_edge=False) < 0
+    # Pits are concave, so the mean pit curvature is negative. This is checked on the inverted surface, where the
+    # bumps become well-defined dimples: each dale then has a genuine interior pit with a clearly negative curvature.
+    # (The flat field surrounding the bumps has no meaningful pit -- its lowest point is set by floating-point noise
+    # in the Gaussian tails, so its location and curvature sign are not well defined.)
+    dimple_surface = Surface(-bump_surface.data, bump_surface.step_x, bump_surface.step_y)
+    assert dimple_surface.Svc(exclude_edge=False) < 0
 
 
 def test_feature_peak_curvature_value(bump_surface):
