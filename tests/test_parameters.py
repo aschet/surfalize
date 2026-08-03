@@ -45,7 +45,11 @@ def test_Sal(surface):
 
 
 def test_Str(surface):
-    assert surface.Str() == pytest.approx(0.062759, abs=EPSILON)
+    # The synthetic fixture is effectively a 1D grating: its autocorrelation decays across the lines but never below
+    # the threshold along them within the field, so the longest decay length -- and therefore Str -- is undefined.
+    # Sal (the fastest, across-line decay) remains well-defined, see test_Sal.
+    with pytest.warns(RuntimeWarning, match="Str is undefined"):
+        assert np.isnan(surface.Str())
 
 
 def test_Sk(surface):

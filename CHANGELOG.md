@@ -1,3 +1,13 @@
+## v0.18.1
+- Fixed the texture aspect ratio `Str` occasionally exceeding 1. The shortest and longest autocorrelation decay
+  lengths were previously derived from two separately selected edge pixels (the geometrically nearest and farthest),
+  which decoupled the direction used to pick a pixel from the decay length actually measured along it and did not
+  guarantee `shortest <= longest`. Both extremes are now taken from a single, self-consistent set of decay lengths
+  measured in every edge direction, so `Str` stays within `(0, 1]`. When the autocorrelation does not decay below the
+  threshold within the evaluation area in at least one direction (e.g. for a 1D interference structure), the longest decay length and therefore `Str` are reported as `NaN` with a warning, while `Sal` (the
+  fastest decay) remains valid. A fully undersampled field (the autocorrelation never decaying below the threshold)
+  now yields `NaN` for both `Sal` and `Str` with a warning instead of raising.
+
 ## v0.18.0
 - Added the ISO 25178-2:2021 feature parameters: `Spd` (density of peaks), `Svd` (density of pits), `Spc`/`Svc`
   (arithmetic mean peak/pit curvature), `S5p`/`S5v` (five-point peak height / pit depth) and `S10z` (ten-point height).

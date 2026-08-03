@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import scipy.ndimage as ndimage
 from scipy.signal import fftconvolve
@@ -5,7 +7,6 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .cache import CachedInstance, cache
-from .mathutils import interpolate_line_on_2d_array, argmin_all, argmax_all, argclosest
 
 
 class AutocorrelationFunction(CachedInstance):
@@ -54,8 +55,10 @@ class AutocorrelationFunction(CachedInstance):
     @cache
     def _calculate_decay_lengths(self, s):
         """
-        Calculates the decay lengths of the 2d autocorrelation function of the surface height data and
-        extracts the indices of the points of minimum and maximum decay.
+        Calculates the decay lengths of the 2d autocorrelation function of the surface height data. The decay length
+        is measured in every direction in which the autocorrelation function decays below the threshold within the
+        evaluation area, and the shortest and longest of those lengths are returned (used for Sal and Str
+        respectively).
 
         Parameters
         ----------
@@ -67,7 +70,12 @@ class AutocorrelationFunction(CachedInstance):
 
         Returns
         -------
-        None
+        tuple[float, float]
+            The shortest and longest decay length. The shortest length is np.nan if the autocorrelation function does
+            not decay below the threshold anywhere within the evaluation area. The longest length is np.nan whenever
+            the thresholded region touches the border of the evaluation area, i.e. the autocorrelation function does
+            not decay below the threshold in at least one direction and the slowest decay is therefore not contained
+            within the field.
         """
         # The threshold is referenced to the autocorrelation value at zero lag (the central peak), which is the
         # maximum of a well-behaved autocorrelation function. Using the central value rather than the global maximum
@@ -81,27 +89,43 @@ class AutocorrelationFunction(CachedInstance):
         edge = region ^ ndimage.binary_dilation(region, iterations=1)
 
         idx_edge = np.argwhere(edge)
-        distances_xy_px = idx_edge - self.center
+        if idx_edge.size == 0:
+            # The autocorrelation function stays above the threshold across the entire evaluation area, so no decay
+            # length can be determined in any direction. Both Sal and Str are undefined.
+            return np.nan, np.nan
+
+        # Measure the decay length in every edge direction and take the extremes from that single, self-consistent
+        # set, rather than selecting the geometrically nearest and farthest edge pixels separately. The latter
+        # decouples the direction used to pick a pixel (its geometric distance to the centre) from the quantity
+        # actually measured (the interpolated threshold crossing along that direction), which does not guarantee
+        # shortest <= longest and can produce Str > 1. Drawing both extremes from the same set of interpolated decay
+        # lengths guarantees shortest <= longest, so Str stays within (0, 1].
         step_array = np.array([self._surface.step_y, self._surface.step_x])
-        distances_xy_units = distances_xy_px * step_array
-        distances = np.linalg.norm(distances_xy_units, axis=1)
-        all_idx_min = idx_edge[argmin_all(distances)]
-        all_idx_max = idx_edge[argmax_all(distances)]
-
-        idx_min = all_idx_min[np.argmin(self.data[all_idx_min[:, 0], all_idx_min[:, 1]])]
-        idx_max = all_idx_max[np.argmin(self.data[all_idx_max[:, 0], all_idx_max[:, 1]])]
-
-        length_min = np.hypot(*((idx_min - self.center) * step_array))
-        length_max = np.hypot(*((idx_max - self.center) * step_array))
-
         n_points = 1000
-        interpolated_line_x = np.linspace(0, length_min, n_points)
-        interpolated_line_y = interpolate_line_on_2d_array(self.data, self.center, idx_min, num_points=n_points)
-        shortest_decay_length = interpolated_line_x[argclosest(threshold, interpolated_line_y)]
+        # Interpolate the autocorrelation function along every centre->edge ray in a single map_coordinates call. Each
+        # ray terminates at its edge pixel, which is the first pixel below the threshold along that direction, so the
+        # threshold crossing is always bracketed within the ray.
+        t = np.linspace(0, 1, n_points)
+        rows = self.center[0] + (idx_edge[:, 0] - self.center[0])[:, None] * t[None, :]
+        cols = self.center[1] + (idx_edge[:, 1] - self.center[1])[:, None] * t[None, :]
+        coords = np.array([rows.ravel(), cols.ravel()])
+        acf_along_rays = ndimage.map_coordinates(self.data, coords, order=3).reshape(len(idx_edge), n_points)
 
-        interpolated_line_x = np.linspace(0, length_max, n_points)
-        interpolated_line_y = interpolate_line_on_2d_array(self.data, self.center, idx_max, num_points=n_points)
-        longest_decay_length = interpolated_line_x[argclosest(threshold, interpolated_line_y)]
+        distances = np.linalg.norm((idx_edge - self.center) * step_array, axis=1)
+        lengths = distances[:, None] * t[None, :]
+        crossing = np.argmin(np.abs(acf_along_rays - threshold), axis=1)
+        decay_lengths = lengths[np.arange(len(idx_edge)), crossing]
+
+        shortest_decay_length = decay_lengths.min()
+
+        # A thresholded region that reaches the border of the evaluation area means the autocorrelation function does
+        # not decay below the threshold in at least one direction. Such a direction is necessarily a slow-decaying one
+        # (it stays correlated across the whole field, as happens along the lamellae of a 1D or 2-beam DLIP structure),
+        # so it can never be the fastest decay: the shortest length, and therefore Sal, remains valid. The slowest
+        # decay, however, is not contained within the field, so the longest length and Str cannot be determined.
+        region_touches_border = (region[0, :].any() or region[-1, :].any()
+                                 or region[:, 0].any() or region[:, -1].any())
+        longest_decay_length = np.nan if region_touches_border else decay_lengths.max()
 
         return shortest_decay_length, longest_decay_length
 
@@ -127,6 +151,10 @@ class AutocorrelationFunction(CachedInstance):
             autocorrelation length.
         """
         Sal, _ = self._calculate_decay_lengths(s)
+        if np.isnan(Sal):
+            warnings.warn("Sal is undefined because the autocorrelation function does not decay below the threshold "
+                          "anywhere within the evaluation area. The evaluation area is too small relative to the "
+                          "correlation length.", RuntimeWarning)
         return Sal
 
     @cache
@@ -151,6 +179,11 @@ class AutocorrelationFunction(CachedInstance):
             texture aspect ratio.
         """
         shortest_decay_length, longest_decay_length = self._calculate_decay_lengths(s)
+        if np.isnan(longest_decay_length):
+            warnings.warn("Str is undefined because the autocorrelation function does not decay below the threshold "
+                          "within the evaluation area in at least one direction (for example along the lamellae of a "
+                          "1D or 2-beam DLIP structure). The evaluation area is too small to determine the longest "
+                          "decay length.", RuntimeWarning)
         Str = shortest_decay_length / longest_decay_length
         return Str
 
