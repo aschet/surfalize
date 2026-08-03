@@ -1,4 +1,4 @@
-## v0.18.1
+## v0.18.2
 - Fixed the texture aspect ratio `Str` occasionally exceeding 1. The shortest and longest autocorrelation decay
   lengths were previously derived from two separately selected edge pixels (the geometrically nearest and farthest),
   which decoupled the direction used to pick a pixel from the decay length actually measured along it and did not
