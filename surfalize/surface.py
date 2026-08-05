@@ -1363,7 +1363,7 @@ class Surface(BaseTopography):
 
     @batch_method('parameter')
     @cache
-    def Sal(self, s=0.2):
+    def Sal(self, s=0.2, on_undefined='nan'):
         """
         Calculates the autocorrelation length Sal. Sal represents the horizontal distance of the f_ACF(tx,ty)
         which has the fastest decay to a specified value s, with 0 < s < 1. s represents the fraction of the
@@ -1376,17 +1376,21 @@ class Surface(BaseTopography):
             point of fastest and slowest decay are calculated respective to the threshold
             value, to which the autocorrelation function decays. The threshold s is a fraction
             of the maximum value of the autocorrelation function.
+        on_undefined : str, default 'nan'
+            Behaviour when Sal is undefined because the autocorrelation function does not decay below the threshold
+            anywhere within the evaluation area. One of 'nan' (return np.nan with a warning) or 'exception' (raise a
+            CalculationError); 'bound' behaves like 'nan' since Sal has no bounded fallback.
 
         Returns
         -------
         Sal : float
             autocorrelation length.
         """
-        return self.get_autocorrelation_function().Sal(s=s)
+        return self.get_autocorrelation_function().Sal(s=s, on_undefined=on_undefined)
 
     @batch_method('parameter')
     @cache
-    def Str(self, s=0.2):
+    def Str(self, s=0.2, on_undefined='nan'):
         """
         Calculates the texture aspect ratio Str. Str represents the ratio of the horizontal distance of the f_ACF(tx,ty)
         which has the fastest decay to a specified value s to the horizontal distance of the fACF(tx,ty) which has the
@@ -1400,13 +1404,19 @@ class Surface(BaseTopography):
             point of fastest and slowest decay are calculated respective to the threshold
             value, to which the autocorrelation function decays. The threshold s is a fraction
             of the maximum value of the autocorrelation function.
+        on_undefined : str, default 'nan'
+            Behaviour when Str is undefined because the autocorrelation function does not decay below the threshold
+            within the evaluation area in at least one direction (e.g. along the lamellae of a 1D or 2-beam DLIP
+            structure). One of 'nan' (return np.nan with a warning), 'bound' (return the shortest length over the
+            measured longest length as an upper bound on Str, with a warning) or 'exception' (raise a
+            CalculationError).
 
         Returns
         -------
         Str : float
             texture aspect ratio.
         """
-        return self.get_autocorrelation_function().Str(s=s)
+        return self.get_autocorrelation_function().Str(s=s, on_undefined=on_undefined)
     
     # Functional parameters ############################################################################################
 

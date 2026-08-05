@@ -7,6 +7,16 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .cache import CachedInstance, cache
+from .exceptions import CalculationError
+
+# Behaviours for Sal/Str when the parameter is undefined because the autocorrelation function does not decay below the
+# threshold within the evaluation area in the relevant direction (see AutocorrelationFunction.Str).
+ON_UNDEFINED_OPTIONS = ('nan', 'bound', 'exception')
+
+
+def _check_on_undefined(on_undefined):
+    if on_undefined not in ON_UNDEFINED_OPTIONS:
+        raise ValueError(f"on_undefined must be one of {ON_UNDEFINED_OPTIONS}, got {on_undefined!r}.")
 
 
 class AutocorrelationFunction(CachedInstance):
@@ -70,12 +80,14 @@ class AutocorrelationFunction(CachedInstance):
 
         Returns
         -------
-        tuple[float, float]
-            The shortest and longest decay length. The shortest length is np.nan if the autocorrelation function does
-            not decay below the threshold anywhere within the evaluation area. The longest length is np.nan whenever
-            the thresholded region touches the border of the evaluation area, i.e. the autocorrelation function does
-            not decay below the threshold in at least one direction and the slowest decay is therefore not contained
-            within the field.
+        tuple[float, float, bool]
+            The shortest decay length, the longest decay length and a flag indicating whether the autocorrelation
+            function decays below the threshold within the evaluation area in every direction. The shortest and
+            longest lengths are np.nan if the function does not decay below the threshold anywhere within the field.
+            When the flag is False (the thresholded region touches the border of the evaluation area), the function
+            does not decay below the threshold in at least one direction; the shortest length is still the true
+            fastest decay, but the longest length is only a lower bound on the true slowest decay, which is not
+            contained within the field.
         """
         # The threshold is referenced to the autocorrelation value at zero lag (the central peak), which is the
         # maximum of a well-behaved autocorrelation function. Using the central value rather than the global maximum
@@ -92,7 +104,7 @@ class AutocorrelationFunction(CachedInstance):
         if idx_edge.size == 0:
             # The autocorrelation function stays above the threshold across the entire evaluation area, so no decay
             # length can be determined in any direction. Both Sal and Str are undefined.
-            return np.nan, np.nan
+            return np.nan, np.nan, False
 
         # Measure the decay length in every edge direction and take the extremes from that single, self-consistent
         # set, rather than selecting the geometrically nearest and farthest edge pixels separately. The latter
@@ -117,21 +129,23 @@ class AutocorrelationFunction(CachedInstance):
         decay_lengths = lengths[np.arange(len(idx_edge)), crossing]
 
         shortest_decay_length = decay_lengths.min()
+        longest_decay_length = decay_lengths.max()
 
         # A thresholded region that reaches the border of the evaluation area means the autocorrelation function does
         # not decay below the threshold in at least one direction. Such a direction is necessarily a slow-decaying one
         # (it stays correlated across the whole field, as happens along the lamellae of a 1D or 2-beam DLIP structure),
         # so it can never be the fastest decay: the shortest length, and therefore Sal, remains valid. The slowest
-        # decay, however, is not contained within the field, so the longest length and Str cannot be determined.
+        # decay, however, is not contained within the field, so the measured longest length is only a lower bound on
+        # the true slowest decay, and Str is not determined by the measurement.
         region_touches_border = (region[0, :].any() or region[-1, :].any()
                                  or region[:, 0].any() or region[:, -1].any())
-        longest_decay_length = np.nan if region_touches_border else decay_lengths.max()
+        decays_within_field = not region_touches_border
 
-        return shortest_decay_length, longest_decay_length
+        return shortest_decay_length, longest_decay_length, decays_within_field
 
 
     @cache
-    def Sal(self, s=0.2):
+    def Sal(self, s=0.2, on_undefined='nan'):
         """
         Calculates the autocorrelation length Sal. Sal represents the horizontal distance of the f_ACF(tx,ty)
         which has the fastest decay to a specified value s, with 0 < s < 1. s represents the fraction of the
@@ -144,21 +158,33 @@ class AutocorrelationFunction(CachedInstance):
             point of fastest and slowest decay are calculated respective to the threshold
             value, to which the autocorrelation function decays. The threshold s is a fraction
             of the maximum value of the autocorrelation function.
+        on_undefined : str, default 'nan'
+            Behaviour when Sal is undefined because the autocorrelation function does not decay below the threshold
+            anywhere within the evaluation area (the field is too small relative to the correlation length). Unlike
+            Str, Sal has no bounded fallback in this case, so 'nan' and 'bound' behave identically:
+
+            - 'nan' or 'bound': return np.nan and issue a RuntimeWarning.
+            - 'exception': raise a CalculationError.
 
         Returns
         -------
         Sal : float
             autocorrelation length.
         """
-        Sal, _ = self._calculate_decay_lengths(s)
+        _check_on_undefined(on_undefined)
+        Sal, _, _ = self._calculate_decay_lengths(s)
         if np.isnan(Sal):
-            warnings.warn("Sal is undefined because the autocorrelation function does not decay below the threshold "
-                          "anywhere within the evaluation area. The evaluation area is too small relative to the "
-                          "correlation length.", RuntimeWarning)
+            message = ("Sal is undefined because the autocorrelation function does not decay below the threshold "
+                       "anywhere within the evaluation area. The evaluation area is too small relative to the "
+                       "correlation length.")
+            if on_undefined == 'exception':
+                raise CalculationError(message)
+            # Neither 'nan' nor 'bound' can supply a value: there is no decay length in any direction.
+            warnings.warn(message, RuntimeWarning)
         return Sal
 
     @cache
-    def Str(self, s=0.2):
+    def Str(self, s=0.2, on_undefined='nan'):
         """
         Calculates the texture aspect ratio Str. Str represents the ratio of the horizontal distance of the f_ACF(tx,ty)
         which has the fastest decay to a specified value s to the horizontal distance of the fACF(tx,ty) which has the
@@ -172,20 +198,38 @@ class AutocorrelationFunction(CachedInstance):
             point of fastest and slowest decay are calculated respective to the threshold
             value, to which the autocorrelation function decays. The threshold s is a fraction
             of the maximum value of the autocorrelation function.
+        on_undefined : str, default 'nan'
+            Behaviour when Str is undefined because the autocorrelation function does not decay below the threshold
+            within the evaluation area in at least one direction (for example along the lamellae of a 1D or 2-beam DLIP
+            structure), so the slowest decay -- and therefore Str -- is not determined by the measurement:
+
+            - 'nan': return np.nan and issue a RuntimeWarning.
+            - 'bound': return the shortest length divided by the measured longest length and issue a RuntimeWarning.
+              Because the measured longest length is only a lower bound on the true slowest decay, this ratio is an
+              upper bound on the true Str rather than its value, and it depends on the size of the evaluation area. If
+              the function does not decay anywhere at all, no bound exists and np.nan is returned.
+            - 'exception': raise a CalculationError.
 
         Returns
         -------
         Str : float
             texture aspect ratio.
         """
-        shortest_decay_length, longest_decay_length = self._calculate_decay_lengths(s)
-        if np.isnan(longest_decay_length):
-            warnings.warn("Str is undefined because the autocorrelation function does not decay below the threshold "
-                          "within the evaluation area in at least one direction (for example along the lamellae of a "
-                          "1D or 2-beam DLIP structure). The evaluation area is too small to determine the longest "
-                          "decay length.", RuntimeWarning)
-        Str = shortest_decay_length / longest_decay_length
-        return Str
+        _check_on_undefined(on_undefined)
+        shortest_decay_length, longest_decay_length, decays_within_field = self._calculate_decay_lengths(s)
+        if decays_within_field:
+            return shortest_decay_length / longest_decay_length
+        message = ("Str is undefined because the autocorrelation function does not decay below the threshold within "
+                   "the evaluation area in at least one direction (for example along the lamellae of a 1D or 2-beam "
+                   "DLIP structure). The evaluation area is too small to determine the longest decay length.")
+        if on_undefined == 'exception':
+            raise CalculationError(message)
+        warnings.warn(message, RuntimeWarning)
+        if on_undefined == 'bound' and not np.isnan(longest_decay_length):
+            # The measured longest length is a lower bound on the true slowest decay, so this ratio is an upper bound
+            # on the true Str. It is field-size-dependent and must be interpreted as such.
+            return shortest_decay_length / longest_decay_length
+        return np.nan
 
     def plot_autocorrelation(self, ax=None, cmap='jet', show_cbar=True):
         if ax is None:

@@ -1,3 +1,12 @@
+## v0.18.3
+- `Surface.Str` (and `AutocorrelationFunction.Str`) gained an `on_undefined` keyword to control the behaviour when
+  `Str` is undefined because the autocorrelation function does not decay below the threshold within the evaluation
+  area in at least one direction (e.g. along the lamellae of a 1D or 2-beam DLIP structure): `'nan'` (default, return
+  `NaN` with a warning), `'bound'` (return the shortest length over the measured longest length as an upper bound on
+  `Str`, with a warning; note this bound depends on the evaluation-area size) or `'exception'` (raise a
+  `CalculationError`). `Surface.Sal` accepts the same keyword for the fully-undersampled case, where `'bound'` behaves
+  like `'nan'` since `Sal` has no bounded fallback.
+
 ## v0.18.2
 - Fixed the texture aspect ratio `Str` occasionally exceeding 1. The shortest and longest autocorrelation decay
   lengths were previously derived from two separately selected edge pixels (the geometrically nearest and farthest),
