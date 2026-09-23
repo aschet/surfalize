@@ -17,7 +17,10 @@ def read_sdf(filehandle, read_image_layers=False, encoding="utf-8"):
         raise CorruptedFileError(str(error)) from error
 
     header = sdf.header
-    metadata = {
+    # Trailer fields first, so they can't clobber the structural header
+    # fields below if a name happens to collide.
+    metadata = dict(sdf.trailer_fields)
+    metadata.update({
         "ManufacID": header.manufacturer_id,
         "CreateDate": header.create_date,
         "ModDate": header.mod_date,
@@ -31,7 +34,7 @@ def read_sdf(filehandle, read_image_layers=False, encoding="utf-8"):
         "DataType": int(header.data_type),
         "CheckType": 0,
         "Dialect": str(header.dialect),
-    }
+    })
     if header.create_date is not None:
         metadata["timestamp"] = header.create_date
 
@@ -58,7 +61,7 @@ def write_sdf(filehandle, surface, encoding="utf-8", binary=True):
         data_type=sdfio.DataType.BINARY64,
     )
     file_format = sdfio.FileFormat.BINARY if binary else sdfio.FileFormat.ASCII
-    trailer = "" if binary else "<ExportedBy>Surfalize</ExportedBy>"
+    trailer = "" if binary else sdfio.format_tagged_fields({"ExportedBy": "Surfalize"})
     sdfio.write(
         filehandle,
         data,

@@ -36,7 +36,7 @@ dependencies = [
     "pillow",
     "chardet",
     "zstandard; python_version < '3.14'",
-    "sdfio>=1.1.0"
+    "sdfio>=1.2.0"
 ]
 
 [project.optional-dependencies]
